@@ -1,0 +1,165 @@
+Perfect! Here's your **updated Deployment YAML** with all enhancements applied, and **in-line comments explaining every line**. This version includes:
+
+✅ CPU/memory requests & limits
+✅ Liveness & readiness probes
+✅ ConfigMap usage
+✅ Horizontal Pod Autoscaler (as a separate resource below the Deployment)
+
+---
+
+### 🧾 **Enhanced Deployment YAML**
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opentelemetry-demo-accountingservice
+  labels:
+    opentelemetry.io/name: opentelemetry-demo-accountingservice
+    app.kubernetes.io/instance: opentelemetry-demo
+    app.kubernetes.io/component: accountingservice
+    app.kubernetes.io/name: opentelemetry-demo-accountingservice
+    app.kubernetes.io/version: "1.12.0"
+    app.kubernetes.io/part-of: opentelemetry-demo
+spec:
+  replicas: 1  # Start with 1 pod, scaling is handled by HPA
+  revisionHistoryLimit: 10  # Keep last 10 revisions for rollback
+  selector:
+    matchLabels:
+      opentelemetry.io/name: opentelemetry-demo-accountingservice
+  template:
+    metadata:
+      labels:
+        opentelemetry.io/name: opentelemetry-demo-accountingservice
+        app.kubernetes.io/instance: opentelemetry-demo
+        app.kubernetes.io/component: accountingservice
+        app.kubernetes.io/name: opentelemetry-demo-accountingservice
+    spec:
+      serviceAccountName: opentelemetry-demo
+      containers:
+        - name: accountingservice
+          image: 'ghcr.io/open-telemetry/demo:1.12.0-accountingservice'
+          imagePullPolicy: IfNotPresent
+
+          # Environment variables loaded from a ConfigMap
+          envFrom:
+            - configMapRef:
+                name: accountingservice-config
+
+          # Individual env vars (can be overridden by ConfigMap if both exist)
+          env:
+            - name: OTEL_SERVICE_NAME
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: metadata.labels['app.kubernetes.io/component']
+            - name: OTEL_COLLECTOR_NAME
+              value: 'opentelemetry-demo-otelcol'
+            - name: KAFKA_SERVICE_ADDR
+              value: 'opentelemetry-demo-kafka:9092'
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: http://$(OTEL_COLLECTOR_NAME):4318
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: service.name=$(OTEL_SERVICE_NAME),service.namespace=opentelemetry-demo,service.version=1.12.0
+
+          # Resource requests and limits
+          resources:
+            requests:
+              cpu: "100m"      # Minimum CPU
+              memory: "64Mi"   # Minimum memory
+            limits:
+              cpu: "200m"      # Max CPU
+              memory: "120Mi"  # Max memory
+
+          # Health check endpoints
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 5
+
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+
+          volumeMounts: []  # No volumes used, can be removed or kept empty
+
+      # Init container waits for Kafka to be ready before starting main app
+      initContainers:
+        - name: wait-for-kafka
+          image: busybox:latest
+          command:
+            - sh
+            - -c
+            - until nc -z -v -w30 opentelemetry-demo-kafka 9092; do echo waiting for kafka; sleep 2; done;
+
+      volumes: []  # No volumes defined here either
+```
+
+---
+
+### 🔧 ConfigMap for Environment Variables
+
+Create this **ConfigMap** to externalize configuration:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: accountingservice-config
+data:
+  OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE: cumulative
+```
+
+---
+
+### 📈 Horizontal Pod Autoscaler (HPA)
+
+```yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: accountingservice-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: opentelemetry-demo-accountingservice
+  minReplicas: 1
+  maxReplicas: 5
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70  # Scale when average CPU > 70%
+```
+
+---
+
+## ✅ Next Steps
+
+1. **Apply ConfigMap**:
+
+   ```bash
+   kubectl apply -f accountingservice-configmap.yaml
+   ```
+
+2. **Apply Deployment**:
+
+   ```bash
+   kubectl apply -f accountingservice-deployment.yaml
+   ```
+
+3. **Apply HPA**:
+
+   ```bash
+   kubectl apply -f accountingservice-hpa.yaml
+   ```
+
+Would you like these YAMLs saved as separate files or merged into one big manifest?
